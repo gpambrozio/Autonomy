@@ -1,0 +1,115 @@
+#!/bin/bash
+#
+# claude-auto - Run Claude with dangerous permissions, a fresh session ID,
+# and the Autonomy plugin directory loaded.
+#
+# Usage:
+#   claude-auto [--log <file>] [claude args...] "Your prompt"
+#
+# Flags added automatically to the inner claude invocation:
+#   --dangerously-skip-permissions
+#   --session-id <new UUID>
+#   --plugin-dir <repo>/Autonomy
+#
+# When the caller piped our stdout/stderr (e.g. through `tee`), we dup the
+# inherited tty stdin into stdout/stderr so claude sees three tty fds and the
+# TUI still renders on the user's terminal.
+#
+# After Claude exits, the session transcript is dumped via claude-transcript.
+# Default sink is the wrapper's stdout. Pass --log <file> to append the
+# transcript to a file instead.
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if ! command -v tmux >/dev/null 2>&1; then
+    cat >&2 <<'EOF'
+claude-auto: tmux is required but was not found on $PATH.
+
+Autonomy drives the Claude TUI by sending keystrokes to the current tmux
+pane, so it cannot run outside tmux. Install tmux and retry:
+
+  macOS (Homebrew):  brew install tmux
+  Debian / Ubuntu:   sudo apt-get install tmux
+  Fedora / RHEL:     sudo dnf install tmux
+  Arch Linux:        sudo pacman -S tmux
+
+Then start a tmux session (`tmux new -s autonomy`) and re-run claude-auto
+from inside it.
+EOF
+    exit 127
+fi
+
+if [[ -z "${TMUX:-}" ]]; then
+    echo "claude-auto: not running inside tmux. Start a tmux session (e.g. 'tmux new -s autonomy') and re-run from inside it." >&2
+    exit 1
+fi
+
+LOG_FILE=""
+ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --log)
+            if [[ $# -lt 2 ]]; then
+                echo "claude-auto: --log requires a file path" >&2
+                exit 2
+            fi
+            LOG_FILE="$2"
+            shift 2
+            ;;
+        --log=*)
+            LOG_FILE="${1#--log=}"
+            shift
+            ;;
+        *)
+            ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+UUID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+
+# Make sure claude sees a tty on all three of stdin/stdout/stderr so the TUI
+# renders even when the caller piped our stdout/stderr.
+#
+# We can't just open /dev/tty: Bun (the runtime claude is bundled in) crashes
+# with "EINVAL: invalid argument, kqueue" when wrapping a /dev/tty fd in a
+# tty.WriteStream. The inherited stdin from a shell that has a controlling
+# terminal, however, is a normal pty fd opened O_RDWR, which Bun accepts.
+#
+# So: if any of fd 0/1/2 isn't already a tty, dup the inherited tty stdin
+# into it. Realistic call shapes are either "all three are the terminal pty"
+# (direct invocation) or "stdin is the pty, stdout/stderr are pipes" (caller
+# piped us into `tee`). Both work below.
+CLAUDE_EXIT=0
+if [ -t 0 ] && [ -t 1 ] && [ -t 2 ]; then
+    claude \
+        --dangerously-skip-permissions \
+        --session-id "$UUID" \
+        --plugin-dir "$PLUGIN_DIR" \
+        "${ARGS[@]}" || CLAUDE_EXIT=$?
+elif [ -t 0 ]; then
+    claude \
+        --dangerously-skip-permissions \
+        --session-id "$UUID" \
+        --plugin-dir "$PLUGIN_DIR" \
+        "${ARGS[@]}" 1>&0 2>&0 || CLAUDE_EXIT=$?
+else
+    # No tty on stdin to dup from; run as-inherited and let claude decide.
+    claude \
+        --dangerously-skip-permissions \
+        --session-id "$UUID" \
+        --plugin-dir "$PLUGIN_DIR" \
+        "${ARGS[@]}" || CLAUDE_EXIT=$?
+fi
+
+if [[ -n "$LOG_FILE" ]]; then
+    "$SCRIPT_DIR/claude-transcript" --raw "$UUID" >>"$LOG_FILE"
+else
+    "$SCRIPT_DIR/claude-transcript" --raw "$UUID"
+fi
+
+exit "$CLAUDE_EXIT"

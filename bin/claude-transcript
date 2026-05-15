@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""
+claude-transcript - Print the narrative steps from a Claude Code session.
+
+Given a session UUID, locate the transcript JSONL under
+<config-dir>/projects/<encoded-cwd>/ and print the chronological sequence
+of user prompts and Claude's narration (assistant `text` content). Tool
+calls, tool results, thinking blocks, hook attachments, and bookkeeping
+records are omitted.
+
+The config root is $CLAUDE_CONFIG_DIR when set, otherwise ~/.claude.
+
+Usage:
+    claude-transcript <UUID>
+    claude-transcript <UUID> --raw      # don't truncate long messages
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+
+
+_CONFIG_DIR_ENV = os.environ.get("CLAUDE_CONFIG_DIR")
+CONFIG_DIR = Path(_CONFIG_DIR_ENV).expanduser() if _CONFIG_DIR_ENV else Path.home() / ".claude"
+PROJECTS_DIR = CONFIG_DIR / "projects"
+TRUNCATE_AT = 2000
+
+
+def find_transcript(session_id: str) -> Path | None:
+    if not PROJECTS_DIR.is_dir():
+        return None
+    for project_dir in PROJECTS_DIR.iterdir():
+        if not project_dir.is_dir():
+            continue
+        candidate = project_dir / f"{session_id}.jsonl"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def fmt_time(iso: str) -> str:
+    if not iso:
+        return "--:--:--"
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return iso
+
+
+def extract_text_items(content) -> list[str]:
+    """Pull `text`-type items out of a content array. Returns [] for tool_result-only messages."""
+    if not isinstance(content, list):
+        return []
+    out = []
+    for item in content:
+        if isinstance(item, dict) and item.get("type") == "text":
+            text = item.get("text", "")
+            if text and text.strip():
+                out.append(text.strip())
+    return out
+
+
+def extract_user_text(entry: dict) -> str | None:
+    msg = entry.get("message", {})
+    content = msg.get("content")
+    if isinstance(content, str):
+        return content.strip() or None
+    texts = extract_text_items(content)
+    return "\n".join(texts) if texts else None
+
+
+def extract_assistant_text(entry: dict) -> str | None:
+    texts = extract_text_items(entry.get("message", {}).get("content"))
+    return "\n".join(texts) if texts else None
+
+
+def maybe_truncate(text: str, limit: int) -> str:
+    if limit <= 0 or len(text) <= limit:
+        return text
+    return text[:limit] + f"\n… [truncated {len(text) - limit} chars; use --raw for full]"
+
+
+def is_meta_user_message(text: str) -> bool:
+    """Filter out CLI-injected system reminders that look like user messages."""
+    stripped = text.strip()
+    # System reminders are wrapped in tags; treat a message that is *only* a reminder as meta.
+    if stripped.startswith("<system-reminder>") and stripped.endswith("</system-reminder>"):
+        return True
+    # Slash-command bodies are dumped as <command-name>…</command-name> blocks.
+    if stripped.startswith("<command-name>") and "</command-name>" in stripped:
+        return True
+    return False
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Print narrative steps from a Claude Code session transcript.",
+    )
+    parser.add_argument("session_id", help="Claude Code session UUID")
+    parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="Don't truncate long user/assistant messages",
+    )
+    args = parser.parse_args()
+
+    session_id = args.session_id.strip().lower()
+    transcript = find_transcript(session_id)
+    if transcript is None:
+        print(f"error: no transcript found for session {session_id} under {PROJECTS_DIR}", file=sys.stderr)
+        return 1
+
+    limit = 0 if args.raw else TRUNCATE_AT
+
+    print(f"# Session {session_id}")
+    print(f"# Transcript: {transcript}")
+    print()
+
+    step = 0
+    with transcript.open(encoding="utf-8") as f:
+        for line_num, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError as exc:
+                print(f"# warning: skipped malformed line {line_num}: {exc}", file=sys.stderr)
+                continue
+
+            entry_type = entry.get("type")
+            if entry_type not in ("user", "assistant"):
+                continue
+
+            if entry_type == "user":
+                text = extract_user_text(entry)
+                if not text or is_meta_user_message(text):
+                    continue
+                label = "USER"
+            else:
+                text = extract_assistant_text(entry)
+                if not text:
+                    continue
+                label = "CLAUDE"
+
+            if entry.get("isSidechain"):
+                label = f"{label} (subagent)"
+
+            step += 1
+            print(f"## [{step}] {fmt_time(entry.get('timestamp', ''))} — {label}")
+            print(maybe_truncate(text, limit))
+            print()
+
+    if step == 0:
+        print("# (no user prompts or assistant narration found in transcript)")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,40 @@
+{
+  "description": "Autonomy: (1) on SessionStart, inject guidance telling Claude to work autonomously and to post plans/questions as GitHub issue comments instead of pausing for user input. (2) on Stop, run handle-stop.py which inspects the last assistant message: if it equals 'done', send /exit to the tmux pane; otherwise nudge claude to confirm completion by replying with 'done'. (3) on StopFailure, run handle-stop-failure.sh which counts consecutive turn failures in $TMPDIR/<session-id>: up to 5 it re-submits the previous prompt via Up+Enter, then exits.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat \"${CLAUDE_PLUGIN_ROOT}/hooks/autonomous-context.txt\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/handle-stop.py\"",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/handle-stop-failure.sh\"",
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}
