@@ -9,7 +9,7 @@
 # Flags added automatically to the inner claude invocation:
 #   --dangerously-skip-permissions
 #   --session-id <new UUID>
-#   --plugin-dir <repo>/Autonomy
+#   --plugin-url <Autonomy main.zip on GitHub>
 #
 # When the caller piped our stdout/stderr (e.g. through `tee`), we dup the
 # inherited tty stdin into stdout/stderr so claude sees three tty fds and the
@@ -22,7 +22,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PLUGIN_URL="https://github.com/gpambrozio/Autonomy/archive/refs/heads/main.zip"
 
 if ! command -v tmux >/dev/null 2>&1; then
     cat >&2 <<'EOF'
@@ -89,20 +89,20 @@ if [ -t 0 ] && [ -t 1 ] && [ -t 2 ]; then
     claude \
         --dangerously-skip-permissions \
         --session-id "$UUID" \
-        --plugin-dir "$PLUGIN_DIR" \
+        --plugin-url "$PLUGIN_URL" \
         "${ARGS[@]}" || CLAUDE_EXIT=$?
 elif [ -t 0 ]; then
     claude \
         --dangerously-skip-permissions \
         --session-id "$UUID" \
-        --plugin-dir "$PLUGIN_DIR" \
+        --plugin-url "$PLUGIN_URL" \
         "${ARGS[@]}" 1>&0 2>&0 || CLAUDE_EXIT=$?
 else
     # No tty on stdin to dup from; run as-inherited and let claude decide.
     claude \
         --dangerously-skip-permissions \
         --session-id "$UUID" \
-        --plugin-dir "$PLUGIN_DIR" \
+        --plugin-url "$PLUGIN_URL" \
         "${ARGS[@]}" || CLAUDE_EXIT=$?
 fi
 
