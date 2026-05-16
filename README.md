@@ -45,9 +45,11 @@ bin/claude-transcript               JSONL transcript -> readable narration
 
 The entry point. Wraps `claude` with the flags Autonomy needs:
 
-- `--dangerously-skip-permissions`
 - `--session-id <fresh-uuid>`
 - `--plugin-dir <this-repo>` (so the hooks above are active)
+
+Permission handling is left to you — pass `--dangerously-skip-permissions`
+(or any other permission-related flag) through to `claude` if you want it.
 
 After Claude exits it dumps the session narration via `claude-transcript`.
 By default the narration prints to stdout; pass `--log <file>` to append

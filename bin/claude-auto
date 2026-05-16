@@ -1,15 +1,18 @@
 #!/bin/bash
 #
-# claude-auto - Run Claude with dangerous permissions, a fresh session ID,
-# and the Autonomy plugin directory loaded.
+# claude-auto - Run Claude with a fresh session ID and the Autonomy plugin
+# loaded.
 #
 # Usage:
 #   claude-auto [--log <file>] [claude args...] "Your prompt"
 #
 # Flags added automatically to the inner claude invocation:
-#   --dangerously-skip-permissions
 #   --session-id <new UUID>
 #   --plugin-url <Autonomy main.zip on GitHub>
+#
+# Permission handling is left to the caller. Pass
+# --dangerously-skip-permissions (or any other permission-related flag) in
+# the forwarded args if you want it.
 #
 # When the caller piped our stdout/stderr (e.g. through `tee`), we dup the
 # inherited tty stdin into stdout/stderr so claude sees three tty fds and the
@@ -87,20 +90,17 @@ UUID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
 CLAUDE_EXIT=0
 if [ -t 0 ] && [ -t 1 ] && [ -t 2 ]; then
     claude \
-        --dangerously-skip-permissions \
         --session-id "$UUID" \
         --plugin-url "$PLUGIN_URL" \
         "${ARGS[@]}" || CLAUDE_EXIT=$?
 elif [ -t 0 ]; then
     claude \
-        --dangerously-skip-permissions \
         --session-id "$UUID" \
         --plugin-url "$PLUGIN_URL" \
         "${ARGS[@]}" 1>&0 2>&0 || CLAUDE_EXIT=$?
 else
     # No tty on stdin to dup from; run as-inherited and let claude decide.
     claude \
-        --dangerously-skip-permissions \
         --session-id "$UUID" \
         --plugin-url "$PLUGIN_URL" \
         "${ARGS[@]}" || CLAUDE_EXIT=$?

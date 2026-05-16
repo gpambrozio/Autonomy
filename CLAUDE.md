@@ -17,7 +17,7 @@ project ships two shell/Python entry points and three hook scripts.
 `bin/claude-auto` is the only entry point users invoke. It:
 
 1. Generates a fresh lowercase UUID for `--session-id`.
-2. Spawns `claude --dangerously-skip-permissions --session-id <uuid> --plugin-dir <repo-root>` plus any extra args.
+2. Spawns `claude --session-id <uuid> --plugin-dir <repo-root>` plus any extra args. Permission handling is left to the caller — pass `--dangerously-skip-permissions` (or anything else) in the forwarded args if desired.
 3. When stdout/stderr are piped (e.g. `claude-auto … | tee log.txt`), dups the inherited tty stdin onto fds 1 and 2 so the Bun-bundled TUI still renders on the terminal. Bare `/dev/tty` is not used because Bun crashes when wrapping it in `tty.WriteStream`.
 4. After `claude` exits, runs `bin/claude-transcript --raw <uuid>` and either prints to stdout or appends to `--log <file>`.
 5. Propagates Claude's exit code.
