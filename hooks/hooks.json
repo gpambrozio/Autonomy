@@ -1,5 +1,5 @@
 {
-  "description": "Autonomy: (1) on SessionStart, inject guidance telling Claude to work autonomously and to post plans/questions as GitHub issue comments instead of pausing for user input. (2) on Stop, run handle-stop.py which inspects the last assistant message: if it equals 'done', send /exit to the tmux pane; otherwise nudge claude to confirm completion by replying with 'done'. (3) on StopFailure, run handle-stop-failure.sh which counts consecutive turn failures in $TMPDIR/<session-id>: up to 5 it re-submits the previous prompt via Up+Enter, then exits.",
+  "description": "Autonomy: (1) on SessionStart, inject autonomous-mode guidance via session-start-context.sh; the variant picked depends on $CLAUDE_AUTO_QUESTIONS_OK (=1 allows AskUserQuestion, anything else discourages all questions). (2) on PreToolUse for AskUserQuestion, run handle-ask-question.sh which denies the call with a stock 'use your best judgement' message when $CLAUDE_AUTO_QUESTIONS_OK is not 1. (3) on Stop, run handle-stop.py which inspects the last assistant message: if it equals 'done', send /exit to the tmux pane; otherwise nudge claude to confirm completion by replying with 'done'. (4) on StopFailure, run handle-stop-failure.sh which counts consecutive turn failures in $TMPDIR/<session-id>: up to 5 it re-submits the previous prompt via Up+Enter, then exits.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,7 +7,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat \"${CLAUDE_PLUGIN_ROOT}/hooks/autonomous-context.txt\""
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/session-start-context.sh\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/handle-ask-question.sh\""
           }
         ]
       }

@@ -10,7 +10,7 @@ Claude Code plugin's hooks drive the session toward `/exit` autonomously
 by sending keystrokes to the pane.
 
 There is no build step, no test suite, and no linter configuration. The
-project ships two shell/Python entry points and three hook scripts.
+project ships two shell/Python entry points and a handful of hook scripts.
 
 ## End-to-end flow
 
@@ -22,7 +22,16 @@ project ships two shell/Python entry points and three hook scripts.
 4. After `claude` exits, runs `bin/claude-transcript --raw <uuid>` and either prints to stdout or appends to `--log <file>`.
 5. Propagates Claude's exit code.
 
-The plugin loaded via `--plugin-dir` is this repo itself. `hooks/hooks.json` registers three hooks against `CLAUDE_PLUGIN_ROOT`.
+The plugin loaded via `--plugin-dir` is this repo itself. `hooks/hooks.json` registers four hooks against `CLAUDE_PLUGIN_ROOT`: SessionStart, PreToolUse (for `AskUserQuestion`), Stop, and StopFailure.
+
+## The `CLAUDE_AUTO_QUESTIONS_OK` switch
+
+Two of the hooks branch on the `CLAUDE_AUTO_QUESTIONS_OK` env var, which is inherited from the caller's shell through `claude-auto` and into the hook subprocesses:
+
+- **`CLAUDE_AUTO_QUESTIONS_OK=1`** — `hooks/session-start-context.sh` cats `autonomous-context.txt` (the original "ask only if absolutely necessary" wording), and `hooks/handle-ask-question.sh` exits 0 with no output (allows the tool through with no opinion).
+- **Anything else (incl. unset, the default)** — SessionStart instead cats `autonomous-context-no-questions.txt` (strict no-questions wording), and the PreToolUse hook on `AskUserQuestion` prints a `PreToolUse` decision JSON with `permissionDecision: deny` and a `permissionDecisionReason` telling Claude to use its best judgement. The reason text is surfaced to Claude in place of a tool result, so the model continues without ever pausing for a human.
+
+If you tweak the strict wording, keep it consistent between `autonomous-context-no-questions.txt` and the `permissionDecisionReason` in `handle-ask-question.sh` — Claude sees the latter only when it actually tries to ask.
 
 ## The Stop-hook completion protocol
 

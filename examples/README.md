@@ -9,6 +9,15 @@ to this folder and that `tmux` is on `PATH`. They forward
 `--dangerously-skip-permissions` by default; override via the
 `CLAUDE_ARGS` env var if you want stricter permission handling.
 
+### A note on `AskUserQuestion`
+
+By default Autonomy denies `AskUserQuestion` via a PreToolUse hook
+because nobody is watching these runs. The four unattended scripts below
+(`run-detached`, `batch-prompts`, `parallel-repos`, `cron-daily-digest`)
+all rely on that default — if questions were allowed, a stuck session
+would block forever. `attended-run.sh` is the exception: it sets
+`CLAUDE_AUTO_QUESTIONS_OK=1` so you can attach and answer.
+
 ## `run-detached.sh`
 
 Fire-and-forget wrapper. Spawns a detached tmux session, runs
@@ -51,6 +60,24 @@ PROMPT="Audit deps and write ./AUTONOMY-AUDIT.md" \
 
 Every concurrent session is a live `claude` invocation, so raise the cap
 deliberately.
+
+## `attended-run.sh`
+
+Like `run-detached.sh`, but exports `CLAUDE_AUTO_QUESTIONS_OK=1` before
+launching so `AskUserQuestion` is allowed through. Use this when you
+want the session to run autonomously most of the time but reserve the
+option to be pinged for genuinely ambiguous calls. Attach from another
+terminal to answer.
+
+```
+./attended-run.sh "Refactor the auth module — pick the conventions you see in the rest of the repo"
+# then, from another terminal:
+tmux attach -t <session-name printed at launch>
+```
+
+The wrapper still blocks until the session ends, so you get the
+transcript path back when it's done. Ctrl-C in the launching shell is
+safe — the tmux session keeps running and you can re-attach.
 
 ## `cron-daily-digest.sh`
 

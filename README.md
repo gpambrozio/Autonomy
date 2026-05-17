@@ -7,12 +7,17 @@ drive the session toward completion autonomously.
 
 ## What it does
 
-When loaded into a session, the plugin installs three hooks:
+When loaded into a session, the plugin installs four hooks:
 
-- **SessionStart** — injects a short context message telling Claude to
-  work autonomously rather than dropping into plan mode or asking
-  clarifying questions, and to use the `AskUserQuestion` tool only when
-  truly blocked.
+- **SessionStart** — runs `hooks/session-start-context.sh`, which injects
+  a short context message telling Claude to work autonomously rather than
+  dropping into plan mode or asking clarifying questions. The exact
+  wording depends on `CLAUDE_AUTO_QUESTIONS_OK` (see below).
+- **PreToolUse (`AskUserQuestion`)** — runs
+  `hooks/handle-ask-question.sh`. When `CLAUDE_AUTO_QUESTIONS_OK` is not
+  `1`, the hook denies the tool call with a stock "use your best
+  judgement and continue" reason that Claude sees in place of a tool
+  result. When the env var is `1`, the call is allowed through.
 - **Stop** — runs `hooks/handle-stop.py`, which reads the
   `last_assistant_message` field from the hook input. If the message is
   the literal word `done`, the script types `/exit` into the controlling
@@ -30,14 +35,35 @@ so the wrapper script must be run from inside tmux.
 ## Layout
 
 ```
-.claude-plugin/plugin.json          plugin manifest
-hooks/hooks.json                    hook registrations
-hooks/autonomous-context.txt        SessionStart context blob
-hooks/handle-stop.py                Stop handler (Python 3)
-hooks/handle-stop-failure.sh        StopFailure handler (bash)
-bin/claude-auto                     wrapper around `claude` + transcript dump
-bin/claude-transcript               JSONL transcript -> readable narration
+.claude-plugin/plugin.json                       plugin manifest
+hooks/hooks.json                                 hook registrations
+hooks/session-start-context.sh                   SessionStart dispatcher
+hooks/autonomous-context.txt                     SessionStart text when questions are OK
+hooks/autonomous-context-no-questions.txt        SessionStart text when questions are blocked
+hooks/handle-ask-question.sh                     PreToolUse handler for AskUserQuestion
+hooks/handle-stop.py                             Stop handler (Python 3)
+hooks/handle-stop-failure.sh                     StopFailure handler (bash)
+bin/claude-auto                                  wrapper around `claude` + transcript dump
+bin/claude-transcript                            JSONL transcript -> readable narration
 ```
+
+## Allowing or blocking questions
+
+By default Autonomy assumes nobody is watching: the `AskUserQuestion`
+tool is denied at the PreToolUse hook with a stock "use your best
+judgement and continue" reason, and the SessionStart context tells
+Claude not to try in the first place.
+
+If you do want to leave a human in the loop for blocked cases, export
+`CLAUDE_AUTO_QUESTIONS_OK=1` in the shell that invokes `claude-auto`:
+
+```
+CLAUDE_AUTO_QUESTIONS_OK=1 claude-auto "your prompt here"
+```
+
+With the var set to `1`, `AskUserQuestion` is allowed through and the
+injected context softens to "ask only if absolutely necessary." Any
+other value (including unset) keeps the strict default.
 
 ## How to use
 
