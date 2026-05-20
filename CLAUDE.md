@@ -53,7 +53,7 @@ Notes that bite:
 
 `hooks/handle-stop-failure.sh` keeps a per-session counter at `${TMPDIR:-/tmp}/${CLAUDE_CODE_SESSION_ID}`:
 
-- Counts ≤ 5: sleep 10s, then `tmux send-keys -t $TMUX_PANE Up Enter` to re-submit the previous prompt.
+- Counts ≤ 5: sleep 10s, send `Up` to the pane, sleep 1s, then send `Enter` to re-submit the previous prompt. The 1s gap mirrors `handle-stop.py` — sending `Enter` immediately after `Up` can land before the TUI has restored the prior prompt into the input box.
 - Count > 5: delete the counter file, sleep 1s, send `/exit Enter`.
 
 The counter file is keyed by the session ID, so parallel sessions don't collide. Counter cleanup only happens on the give-up path; a session that succeeds leaves stale counters in `$TMPDIR` — fine, since the next session has a different UUID.

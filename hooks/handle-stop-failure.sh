@@ -25,5 +25,7 @@ if (( COUNT > 5 )); then
 else
     echo "$COUNT" >"$COUNTER_FILE"
     sleep 10
-    tmux send-keys -t "$TMUX_PANE" Up Enter
+    tmux send-keys -t "$TMUX_PANE" Up
+    sleep 1
+    tmux send-keys -t "$TMUX_PANE" Enter
 fi
