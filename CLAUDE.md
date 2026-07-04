@@ -17,12 +17,12 @@ project ships two shell/Python entry points and a handful of hook scripts.
 `bin/claude-auto` is the only entry point users invoke. It:
 
 1. Generates a fresh lowercase UUID for `--session-id`.
-2. Spawns `claude --session-id <uuid> --plugin-dir <repo-root>` plus any extra args. Permission handling is left to the caller — pass `--dangerously-skip-permissions` (or anything else) in the forwarded args if desired.
+2. Spawns `claude --session-id <uuid> --plugin-url <Autonomy main.zip on GitHub>` plus any extra args. Permission handling is left to the caller — pass `--dangerously-skip-permissions` (or anything else) in the forwarded args if desired. Because the plugin is fetched from the published GitHub zip rather than the local checkout, edits to the hooks in this repo only take effect once they are pushed to `main`.
 3. When stdout/stderr are piped (e.g. `claude-auto … | tee log.txt`), dups the inherited tty stdin onto fds 1 and 2 so the Bun-bundled TUI still renders on the terminal. Bare `/dev/tty` is not used because Bun crashes when wrapping it in `tty.WriteStream`.
 4. After `claude` exits, runs `bin/claude-transcript --raw <uuid>` and either prints to stdout or appends to `--log <file>`.
 5. Propagates Claude's exit code.
 
-The plugin loaded via `--plugin-dir` is this repo itself. `hooks/hooks.json` registers four hooks against `CLAUDE_PLUGIN_ROOT`: SessionStart, PreToolUse (for `AskUserQuestion`), Stop, and StopFailure.
+The plugin loaded via `--plugin-url` is this repo, published as a zip on GitHub. `hooks/hooks.json` registers four hooks against `CLAUDE_PLUGIN_ROOT`: SessionStart, PreToolUse (for `AskUserQuestion`), Stop, and StopFailure. To test local hook changes before pushing, run `claude` directly with `--plugin-dir <repo-root>` instead of going through `claude-auto`.
 
 ## The `CLAUDE_AUTO_QUESTIONS_OK` switch
 
@@ -46,6 +46,7 @@ This is the load-bearing piece — read it before changing anything in `hooks/`.
 Notes that bite:
 - The handler sleeps 1s before `send-keys` so the Stop event settles in the TUI before keystrokes arrive at the prompt box.
 - A second 1s sleep separates the text from the `Enter` keypress — sending `Enter` immediately after text only inserts a newline in Claude's prompt box; the pause makes it submit.
+- `/exit` is not unconditional: with background tasks/agents still running, the TUI shows a "Background work is running" select dialog instead of exiting. Its default-highlighted option is "Exit anyway", so a plain `Enter` confirms. Both `handle-stop.py` (`confirm_exit_dialog`) and the give-up path of `handle-stop-failure.sh` poll `tmux capture-pane` for up to ~5s after submitting `/exit` and send that extra `Enter` when the dialog text ("Background work is running" / "Exit anyway") is visible. If a Claude Code update rewords the dialog, these matchers are the thing to update.
 - The hook is registered with `"async": true` in `hooks/hooks.json`.
 - `hooks/autonomous-context.txt` does **not** currently spell out the `done`/`waiting` protocol — Claude learns it from the nudge on the first Stop. If you change the protocol words, update both `handle-stop.py` and the nudge text.
 

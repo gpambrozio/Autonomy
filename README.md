@@ -21,13 +21,18 @@ When loaded into a session, the plugin installs four hooks:
 - **Stop** — runs `hooks/handle-stop.py`, which reads the
   `last_assistant_message` field from the hook input. If the message is
   the literal word `done`, the script types `/exit` into the controlling
-  tmux pane to end the session. Otherwise it types a nudge prompt asking
-  Claude to confirm it has nothing left to do.
+  tmux pane to end the session; if Claude Code then shows its
+  "Background work is running" confirmation dialog (because background
+  tasks are still alive), the script presses Enter again to pick the
+  default "Exit anyway" option so the session really ends. Otherwise it
+  types a nudge prompt asking Claude to confirm it has nothing left to
+  do.
 - **StopFailure** — runs `hooks/handle-stop-failure.sh`, which keeps a
   per-session retry counter at `$TMPDIR/<session-id>`. Up to five
   consecutive failures it types `Up` + `Enter` to re-submit the previous
   prompt after a 10s wait. On the sixth failure it gives up and types
-  `/exit`.
+  `/exit`, confirming the "Background work is running" dialog the same
+  way as the Stop handler if it appears.
 
 All keystroke side-effects target the current tmux pane via `$TMUX_PANE`,
 so the wrapper script must be run from inside tmux.
@@ -72,7 +77,13 @@ other value (including unset) keeps the strict default.
 The entry point. Wraps `claude` with the flags Autonomy needs:
 
 - `--session-id <fresh-uuid>`
-- `--plugin-dir <this-repo>` (so the hooks above are active)
+- `--plugin-url <Autonomy main.zip on GitHub>` (so the hooks above are
+  active)
+
+Because the plugin is fetched from the published GitHub zip rather than
+your local checkout, changes you make to the hooks here only take effect
+once they are pushed to `main`. To try local changes first, run `claude`
+directly with `--plugin-dir <this-repo>` instead of `claude-auto`.
 
 Permission handling is left to you — pass `--dangerously-skip-permissions`
 (or any other permission-related flag) through to `claude` if you want it.
