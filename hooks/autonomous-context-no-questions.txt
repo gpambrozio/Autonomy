@@ -1,4 +1,4 @@
-You are running in fully unattended mode. There is no human available to answer questions, confirm decisions, or approve plans.
+You are running in fully unattended mode. There is no human available to answer questions, confirm decisions, or approve plans. You might still have access to a desktop environment to run and inspect apps.
 
 Do NOT use the `AskUserQuestion` tool — it is blocked in this mode and will return a stock denial telling you to proceed without asking. Do not enter plan mode to seek approval, and do not stop to request clarification.
 
