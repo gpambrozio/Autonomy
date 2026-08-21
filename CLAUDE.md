@@ -24,6 +24,31 @@ project ships two shell/Python entry points and a handful of hook scripts.
 
 The plugin loaded via `--plugin-url` is this repo, published as a zip on GitHub. `hooks/hooks.json` registers four hooks against `CLAUDE_PLUGIN_ROOT`: SessionStart, PreToolUse (for `AskUserQuestion`), Stop, and StopFailure. To test local hook changes before pushing, run `claude` directly with `--plugin-dir <repo-root>` instead of going through `claude-auto`.
 
+## The folder-trust watcher
+
+An untrusted cwd makes `claude` show a "Quick safety check: Is this a project
+you created or one you trust?" select dialog *before* the session exists, so
+none of the plugin's hooks can answer it. `bin/claude-auto` therefore starts
+`bin/claude-trust-watch` in the background (unless `CLAUDE_AUTO_TRUST=0`) and
+kills it once `claude` exits.
+
+The watcher polls `tmux capture-pane` every 0.5s for up to
+`CLAUDE_AUTO_TRUST_TIMEOUT` seconds (default 60) and sends a bare `Enter`,
+which takes the default-highlighted "Yes, I trust this folder" option. It
+exits as soon as the dialog is gone, or silently at the timeout when the
+directory was already trusted.
+
+Detection requires *both* a trust-prompt line ("I trust this folder", "trust
+the files in this folder", "Is this a project you created or one you trust")
+*and* the `Enter to confirm` select-dialog footer — the footer is what keeps
+normal session output that happens to mention trusting a folder from
+triggering a stray `Enter` into Claude's prompt box. If a Claude Code update
+rewords the dialog, `pane_shows_trust_prompt` is the thing to update.
+
+Unlike the pane pokes in `hooks/`, this one lives in `bin/` and so does **not**
+ship in the plugin zip — a local edit here takes effect immediately, no push
+to `main` required.
+
 ## The `CLAUDE_AUTO_QUESTIONS_OK` switch
 
 Two of the hooks branch on the `CLAUDE_AUTO_QUESTIONS_OK` env var, which is inherited from the caller's shell through `claude-auto` and into the hook subprocesses:

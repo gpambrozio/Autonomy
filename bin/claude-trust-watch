@@ -1,0 +1,63 @@
+#!/bin/bash
+#
+# claude-trust-watch - Answer Claude Code's folder-trust prompt in a tmux pane.
+#
+# Usage:
+#   claude-trust-watch [pane] [timeout-seconds]
+#
+# When Claude Code is started in a directory it has not seen before it shows
+# a blocking "Quick safety check: Is this a project you created or one you
+# trust?" select dialog before the session (and therefore before any plugin
+# hook) exists. Nothing inside the plugin can answer it, so claude-auto runs
+# this watcher alongside `claude`: it polls the pane and presses Enter to
+# pick the default-highlighted "Yes, I trust this folder" option.
+#
+# The watcher exits as soon as it has confirmed the dialog, or after the
+# timeout if the dialog never shows up (the usual case for an already
+# trusted directory).
+
+set -u
+
+PANE="${1:-${TMUX_PANE:-}}"
+TIMEOUT="${2:-${CLAUDE_AUTO_TRUST_TIMEOUT:-60}}"
+POLL_INTERVAL=0.5
+
+if [[ -z "$PANE" ]]; then
+    echo "claude-trust-watch: no tmux pane given and \$TMUX_PANE is unset" >&2
+    exit 2
+fi
+
+# The dialog is identified by one of its option labels plus the select-prompt
+# footer, so ordinary transcript text that happens to mention trusting a
+# folder can't trigger a stray Enter.
+pane_shows_trust_prompt() {
+    local captured
+    captured="$(tmux capture-pane -p -t "$PANE" 2>/dev/null)" || return 1
+    grep -q -e 'Enter to confirm' <<<"$captured" || return 1
+    grep -q \
+        -e 'I trust this folder' \
+        -e 'trust the files in this folder' \
+        -e 'Is this a project you created or one you trust' \
+        <<<"$captured"
+}
+
+# Poll for the dialog. Each iteration is POLL_INTERVAL seconds.
+deadline_iterations=$(awk -v t="$TIMEOUT" -v i="$POLL_INTERVAL" 'BEGIN { print int(t / i) }')
+
+for (( i = 0; i < deadline_iterations; i++ )); do
+    if pane_shows_trust_prompt; then
+        # Option 1 ("Yes, I trust this folder") is already highlighted, so a
+        # plain Enter confirms it. Re-check afterwards in case the keystroke
+        # landed while the dialog was still painting.
+        for _ in 1 2 3; do
+            tmux send-keys -t "$PANE" Enter
+            sleep 1
+            pane_shows_trust_prompt || exit 0
+        done
+        echo "claude-trust-watch: trust prompt still visible after 3 confirmations" >&2
+        exit 1
+    fi
+    sleep "$POLL_INTERVAL"
+done
+
+exit 0

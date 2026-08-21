@@ -49,7 +49,39 @@ hooks/handle-ask-question.sh                     PreToolUse handler for AskUserQ
 hooks/handle-stop.py                             Stop handler (Python 3)
 hooks/handle-stop-failure.sh                     StopFailure handler (bash)
 bin/claude-auto                                  wrapper around `claude` + transcript dump
+bin/claude-trust-watch                           auto-confirms the folder-trust dialog
 bin/claude-transcript                            JSONL transcript -> readable narration
+```
+
+## The folder-trust prompt
+
+Starting `claude` in a directory it has not been trusted for pops a
+blocking dialog before the session exists:
+
+```
+Quick safety check: Is this a project you created or one you trust?
+> 1. Yes, I trust this folder
+  2. No, exit
+```
+
+No hook can answer it — the plugin isn't loaded yet at that point — so
+`claude-auto` starts `bin/claude-trust-watch` in the background instead.
+The watcher polls `tmux capture-pane` for the dialog and presses Enter to
+take the default-highlighted "Yes, I trust this folder" option, then
+exits. If the dialog never appears (the usual case for an already trusted
+directory) it gives up quietly after 60 seconds.
+
+To recognise the dialog it requires both a trust-prompt line and the
+`Enter to confirm` footer of a select dialog, so ordinary session output
+that mentions trusting a folder can't trigger a stray Enter.
+
+- `CLAUDE_AUTO_TRUST=0` — don't start the watcher; leave the dialog for a
+  human.
+- `CLAUDE_AUTO_TRUST_TIMEOUT=<seconds>` — how long the watcher waits for
+  the dialog before giving up (default 60).
+
+```
+CLAUDE_AUTO_TRUST=0 claude-auto "your prompt here"
 ```
 
 ## Allowing or blocking questions

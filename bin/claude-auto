@@ -75,6 +75,26 @@ done
 
 UUID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
 
+# A directory claude hasn't been trusted for yet gets a blocking "Is this a
+# project you created or one you trust?" dialog before the session starts, so
+# no plugin hook can answer it. Run a watcher on the pane instead; it presses
+# Enter on the default "Yes, I trust this folder" option and then exits.
+# Set CLAUDE_AUTO_TRUST=0 to leave the dialog for a human.
+TRUST_WATCH_PID=""
+if [[ "${CLAUDE_AUTO_TRUST:-1}" != "0" ]]; then
+    "$SCRIPT_DIR/claude-trust-watch" "$TMUX_PANE" &
+    TRUST_WATCH_PID=$!
+fi
+
+stop_trust_watch() {
+    if [[ -n "$TRUST_WATCH_PID" ]]; then
+        kill "$TRUST_WATCH_PID" 2>/dev/null || true
+        wait "$TRUST_WATCH_PID" 2>/dev/null || true
+        TRUST_WATCH_PID=""
+    fi
+}
+trap stop_trust_watch EXIT
+
 # Make sure claude sees a tty on all three of stdin/stdout/stderr so the TUI
 # renders even when the caller piped our stdout/stderr.
 #
@@ -105,6 +125,8 @@ else
         --plugin-url "$PLUGIN_URL" \
         "${ARGS[@]}" || CLAUDE_EXIT=$?
 fi
+
+stop_trust_watch
 
 if [[ -n "$LOG_FILE" ]]; then
     "$SCRIPT_DIR/claude-transcript" --raw "$UUID" >>"$LOG_FILE"
