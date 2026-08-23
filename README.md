@@ -35,7 +35,10 @@ When loaded into a session, the plugin installs four hooks:
   way as the Stop handler if it appears.
 
 All keystroke side-effects target the current tmux pane via `$TMUX_PANE`,
-so the wrapper script must be run from inside tmux.
+so the wrapper script must be run from inside tmux. You do not have to
+arrange that yourself: started outside tmux, `claude-auto` opens a fresh
+session (`autonomy-$$`) and re-execs itself inside it, keeping the working
+directory and forwarding its arguments untouched.
 
 ## Layout
 
@@ -49,7 +52,8 @@ hooks/handle-ask-question.sh                     PreToolUse handler for AskUserQ
 hooks/handle-stop.py                             Stop handler (Python 3)
 hooks/handle-stop-failure.sh                     StopFailure handler (bash)
 bin/claude-auto                                  wrapper around `claude` + transcript dump
-bin/claude-trust-watch                           auto-confirms the folder-trust dialog
+bin/claude-trust-seed                            pre-accepts the folder-trust dialog
+bin/claude-trust-watch                           auto-confirms it if it shows anyway
 bin/claude-transcript                            JSONL transcript -> readable narration
 ```
 
@@ -64,19 +68,39 @@ Quick safety check: Is this a project you created or one you trust?
   2. No, exit
 ```
 
-No hook can answer it — the plugin isn't loaded yet at that point — so
-`claude-auto` starts `bin/claude-trust-watch` in the background instead.
-The watcher polls `tmux capture-pane` for the dialog and presses Enter to
-take the default-highlighted "Yes, I trust this folder" option, then
-exits. If the dialog never appears (the usual case for an already trusted
-directory) it gives up quietly after 60 seconds.
+No hook can answer it — the plugin isn't loaded yet at that point — and
+the only supported way to skip it is non-interactive `-p` mode, which
+Autonomy can't use because it needs the TUI. So `claude-auto` handles it
+in two layers.
+
+**1. `bin/claude-trust-seed` (before launch).** The trust record is just a
+flag in `~/.claude.json`:
+
+```json
+{"projects": {"/path/to/dir": {"hasTrustDialogAccepted": true}}}
+```
+
+so the seeder sets it for `$PWD` up front and the dialog never appears.
+This is the layer that matters for per-job worktrees like
+`<repo>-worktree-issue-71`, whose paths are unique per run and therefore
+can't be trusted in advance. Writes are flock-serialised and atomic, and
+a config that isn't valid JSON is refused rather than overwritten. A
+failure here is not fatal — it just falls through to layer 2.
+
+Because it pre-accepts a security prompt, point it only at directories
+you already control: your own repo, checked out in a throwaway VM.
+
+**2. `bin/claude-trust-watch` (fallback).** Polls `tmux capture-pane` and
+presses Enter on the default-highlighted "Yes, I trust this folder"
+option, covering the cases the seeder can't — a Claude that rewrites the
+config underneath us, or a seed that failed. If the dialog never appears
+(now the normal case) it gives up quietly after 60 seconds.
 
 To recognise the dialog it requires both a trust-prompt line and the
 `Enter to confirm` footer of a select dialog, so ordinary session output
 that mentions trusting a folder can't trigger a stray Enter.
 
-- `CLAUDE_AUTO_TRUST=0` — don't start the watcher; leave the dialog for a
-  human.
+- `CLAUDE_AUTO_TRUST=0` — skip both layers; leave the dialog for a human.
 - `CLAUDE_AUTO_TRUST_TIMEOUT=<seconds>` — how long the watcher waits for
   the dialog before giving up (default 60).
 

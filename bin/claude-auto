@@ -14,6 +14,10 @@
 # --dangerously-skip-permissions (or any other permission-related flag) in
 # the forwarded args if you want it.
 #
+# Autonomy steers the Claude TUI through tmux, so claude-auto must run inside
+# a tmux session. When started outside one, it launches a fresh session and
+# re-execs itself inside it (see below); tmux must be installed either way.
+#
 # When the caller piped our stdout/stderr (e.g. through `tee`), we dup the
 # inherited tty stdin into stdout/stderr so claude sees three tty fds and the
 # TUI still renders on the user's terminal.
@@ -39,15 +43,19 @@ pane, so it cannot run outside tmux. Install tmux and retry:
   Fedora / RHEL:     sudo dnf install tmux
   Arch Linux:        sudo pacman -S tmux
 
-Then start a tmux session (`tmux new -s autonomy`) and re-run claude-auto
-from inside it.
+Once tmux is installed, just re-run claude-auto: it starts its own tmux
+session automatically.
 EOF
     exit 127
 fi
 
+# Autonomy drives the Claude TUI by sending keystrokes to the current tmux
+# pane, so we must run inside tmux. If we aren't, bootstrap a fresh session
+# and re-exec ourselves inside it, attaching the terminal so the TUI shows.
+# tmux hands our argv straight to execvp, so the prompt and every flag survive
+# without any quoting; -c keeps the working directory the caller started in.
 if [[ -z "${TMUX:-}" ]]; then
-    echo "claude-auto: not running inside tmux. Start a tmux session (e.g. 'tmux new -s autonomy') and re-run from inside it." >&2
-    exit 1
+    exec tmux new-session -c "$PWD" -s "autonomy-$$" "$0" "$@"
 fi
 
 LOG_FILE=""
@@ -77,9 +85,22 @@ UUID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
 
 # A directory claude hasn't been trusted for yet gets a blocking "Is this a
 # project you created or one you trust?" dialog before the session starts, so
-# no plugin hook can answer it. Run a watcher on the pane instead; it presses
-# Enter on the default "Yes, I trust this folder" option and then exits.
-# Set CLAUDE_AUTO_TRUST=0 to leave the dialog for a human.
+# no plugin hook can answer it. Set CLAUDE_AUTO_TRUST=0 to leave it to a human.
+#
+# Two layers, because the cheap one is also the brittle one:
+#
+#   1. claude-trust-seed records the trust in ~/.claude.json up front. It is
+#      deterministic and does not care how the dialog is worded. Its failure is
+#      NOT fatal (note the `||` — `set -e` is on): a job is worth more than a
+#      tidy config, and layer 2 still covers us.
+#   2. claude-trust-watch presses Enter if the dialog shows up anyway — a
+#      claude that rewrites the config underneath us, a key we guessed wrong,
+#      or a seed that failed above.
+if [[ "${CLAUDE_AUTO_TRUST:-1}" != "0" ]]; then
+    "$SCRIPT_DIR/claude-trust-seed" "$PWD" \
+        || echo "claude-auto: could not pre-trust $PWD; leaving it to claude-trust-watch" >&2
+fi
+
 TRUST_WATCH_PID=""
 if [[ "${CLAUDE_AUTO_TRUST:-1}" != "0" ]]; then
     "$SCRIPT_DIR/claude-trust-watch" "$TMUX_PANE" &

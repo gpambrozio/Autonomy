@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""claude-trust-seed - Pre-accept Claude Code's folder-trust dialog for a directory.
+
+Usage:
+    claude-trust-seed [directory]      (default: the current directory)
+
+Claude Code shows a blocking
+
+    Quick safety check: Is this a project you created or one you trust?
+
+select dialog for any working directory it has no trust record for. It appears
+*before* the session exists, so no plugin hook can answer it, and there is no
+CLI flag to skip it outside non-interactive `-p` mode -- which Autonomy cannot
+use, because it needs the TUI for its tmux keystrokes.
+
+The trust record is just a flag in ~/.claude.json:
+
+    {"projects": {"/path/to/dir": {"hasTrustDialogAccepted": true}}}
+
+so we set it up front instead of screen-scraping the dialog afterwards. This
+matters most for the ephemeral per-job worktrees (`<repo>-worktree-issue-71`)
+that claude-issue and claude-pr-command create: their paths are unique per run
+and so can never be trusted ahead of time.
+
+This deliberately pre-accepts a security prompt, so it is meant for
+directories the caller already controls -- a CI checkout of your own repo in a
+throwaway VM. It is not a general-purpose thing to point at unknown code.
+
+Exits 0 when the directory is trusted (including when it already was), and
+non-zero with a message on stderr otherwise. Callers should treat failure as
+non-fatal and fall back to claude-trust-watch.
+
+CONCURRENCY: writes are serialized against other copies of this script by an
+flock'd sidecar and land atomically via os.replace, so an interrupted run can
+never leave a truncated config. Claude itself does not take that lock, so this
+is only safe to run while no Claude session is writing the file -- i.e. just
+before launching one, which is the only way claude-auto calls it. The
+already-trusted fast path skips the write entirely, so the steady state is
+read-only.
+"""
+
+import fcntl
+import json
+import os
+import sys
+import tempfile
+
+CONFIG_PATH = os.path.expanduser("~/.claude.json")
+LOCK_PATH = CONFIG_PATH + ".autonomy-lock"
+TRUST_KEY = "hasTrustDialogAccepted"
+
+
+def load_config(path):
+    """Read the config, treating a missing file as an empty one.
+
+    A corrupt config is an error rather than something to overwrite: it holds
+    the OAuth account and every project's history, so silently replacing it
+    with `{}` would be far worse than the dialog we are trying to avoid.
+    """
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"{path} is not valid JSON ({exc}); refusing to overwrite it"
+        ) from exc
+
+
+def write_config_atomically(path, config):
+    """Replace the config in one atomic step, preserving its mode."""
+    directory = os.path.dirname(path) or "."
+    try:
+        mode = os.stat(path).st_mode & 0o777
+    except FileNotFoundError:
+        mode = 0o600
+
+    # The temp file must share a filesystem with the target for os.replace to
+    # be atomic, so it goes in the same directory.
+    fd, temp_path = tempfile.mkstemp(dir=directory, prefix=".claude.json.autonomy-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(config, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_path, mode)
+        os.replace(temp_path, path)
+    except BaseException:
+        os.unlink(temp_path)
+        raise
+
+
+def seed_trust(target):
+    """Record `target` as trusted. Returns True if the config was changed."""
+    config = load_config(CONFIG_PATH)
+    project = config.setdefault("projects", {}).setdefault(target, {})
+
+    if project.get(TRUST_KEY) is True:
+        return False
+
+    project[TRUST_KEY] = True
+    write_config_atomically(CONFIG_PATH, config)
+    return True
+
+
+def main():
+    if len(sys.argv) > 2:
+        print(f"Usage: {os.path.basename(sys.argv[0])} [directory]", file=sys.stderr)
+        return 2
+
+    # Trust is keyed by the exact path Claude uses as its cwd, which is the
+    # symlink-resolved one -- so resolve here too or the key will not match.
+    target = os.path.realpath(sys.argv[1] if len(sys.argv) > 1 else os.getcwd())
+
+    if not os.path.isdir(target):
+        print(f"claude-trust-seed: not a directory: {target}", file=sys.stderr)
+        return 1
+
+    try:
+        with open(LOCK_PATH, "w", encoding="utf-8") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            changed = seed_trust(target)
+    except (OSError, RuntimeError) as exc:
+        print(f"claude-trust-seed: {exc}", file=sys.stderr)
+        return 1
+
+    if changed:
+        print(f"claude-trust-seed: trusted {target}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

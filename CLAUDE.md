@@ -24,13 +24,29 @@ project ships two shell/Python entry points and a handful of hook scripts.
 
 The plugin loaded via `--plugin-url` is this repo, published as a zip on GitHub. `hooks/hooks.json` registers four hooks against `CLAUDE_PLUGIN_ROOT`: SessionStart, PreToolUse (for `AskUserQuestion`), Stop, and StopFailure. To test local hook changes before pushing, run `claude` directly with `--plugin-dir <repo-root>` instead of going through `claude-auto`.
 
-## The folder-trust watcher
+## The folder-trust handling
 
 An untrusted cwd makes `claude` show a "Quick safety check: Is this a project
 you created or one you trust?" select dialog *before* the session exists, so
-none of the plugin's hooks can answer it. `bin/claude-auto` therefore starts
-`bin/claude-trust-watch` in the background (unless `CLAUDE_AUTO_TRUST=0`) and
-kills it once `claude` exits.
+none of the plugin's hooks can answer it, and the only supported bypass is
+non-interactive `-p` mode, which we can't use (we need the TUI). `claude-auto`
+therefore does two things, unless `CLAUDE_AUTO_TRUST=0` disables both.
+
+**`bin/claude-trust-seed` runs first**, writing
+`projects["$PWD"].hasTrustDialogAccepted = true` into `~/.claude.json` so the
+dialog never renders. This is what actually fixes the per-job worktrees
+(`<repo>-worktree-issue-71`): their paths are unique per run, so no amount of
+pre-trusting a base image can ever cover them. Writes are flock-serialised and
+land via `os.replace`; an invalid-JSON config is refused, never overwritten,
+because that file holds the OAuth account. Its failure is deliberately
+non-fatal (`||` in `claude-auto`, which runs under `set -e`) — losing a job to
+a config hiccup would be a worse trade than the dialog.
+
+It only takes the lock against other copies of itself, not against `claude`,
+so it must stay where it is: before `claude` launches. Don't move it later.
+
+**`bin/claude-trust-watch` stays as the fallback**, started in the background
+and killed once `claude` exits.
 
 The watcher polls `tmux capture-pane` every 0.5s for up to
 `CLAUDE_AUTO_TRUST_TIMEOUT` seconds (default 60) and sends a bare `Enter`,
@@ -46,8 +62,26 @@ triggering a stray `Enter` into Claude's prompt box. If a Claude Code update
 rewords the dialog, `pane_shows_trust_prompt` is the thing to update.
 
 Unlike the pane pokes in `hooks/`, this one lives in `bin/` and so does **not**
-ship in the plugin zip — a local edit here takes effect immediately, no push
-to `main` required.
+ship in the plugin zip. That does *not* mean a local edit is enough — see
+below.
+
+## `bin/` is the single source of truth, and it travels by checkout
+
+`bin/claude-auto`, `bin/claude-trust-watch` and `bin/claude-transcript` are the
+only copies of those scripts that should exist anywhere. `Scripts/bin` used to
+carry its own forked `claude-auto`, which is how the 0.1.4 trust watcher was
+written, pushed, and then never actually ran: the tart job VMs put
+`~/repositories/Scripts/bin` on `PATH`, so they kept executing the fork. That
+duplicate is gone; consumers now prepend `~/repositories/Autonomy/bin` instead.
+
+The consequence for editing: `bin/` reaches a job VM by **repo checkout**, not
+by the plugin zip. `mini/vm-bootstrap.sh` rsyncs the host's
+`~/repositories/Autonomy` working tree into the VM, and `mini/sync.sh` pulls
+that seed. So a `bin/` change is live for the next VM as soon as it is saved on
+the CI host, but a change pushed to `main` only reaches the host once `sync.sh`
+pulls it. Hooks are the mirror image — they ride the zip and need a push to
+`main`. Neither one takes effect "immediately" everywhere, and they do not take
+effect by the same route.
 
 ## The `CLAUDE_AUTO_QUESTIONS_OK` switch
 

@@ -1,6 +1,6 @@
 {
   "name": "Autonomy",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Run Claude Code sessions unattended: injects autonomous-work guidance on SessionStart, auto-confirms or auto-exits on Stop, and retries failed turns on StopFailure via tmux keystrokes.",
   "author": {
     "name": "Gustavo Ambrozio"
